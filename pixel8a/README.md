@@ -1,6 +1,6 @@
 # Pixel 8a scooter autopilot
 
-This Windows dashboard watches a Pixel 8a game through scrcpy, recognizes the green scooter and brick pillar openings, and sends optional ADB taps. It is a separate adaptation in this fork; the original Java program remains under `src/`.
+This Windows dashboard watches a Pixel 8a game through scrcpy and draws the scooter and pillar openings. Its default **Java scan-line (fork)** engine runs the adapted Java detector and tap planner under `src/`; the GUI receives Java detections, tap counts, and status. The **Python visual / manual points** option keeps the earlier point-marking controller.
 
 ## Set up in Command Prompt
 
@@ -14,17 +14,17 @@ This Windows dashboard watches a Pixel 8a game through scrcpy, recognizes the gr
    .venv\Scripts\python.exe main.py
    ```
 
-   After installation, `Start Pixel 8a Autopilot.cmd` runs the last command.
+   After installation, `Start Pixel8a GUI.cmd` in the repository root runs the GUI. On the original development PC, this launcher can also use the existing sibling dashboard environment when `pixel8a\.venv` has not been created. `Start Pixel 8a Autopilot.cmd` delegates to the same launcher.
 
 The app uses `config/settings.example.json` until you create `config/settings.local.json`. Copy the example to the local file to set your device serial, tool paths, video codec, mirror placement, and tap coordinates. The local file is ignored by Git. If one ADB device is attached, `serial` may be empty. The default `(540, 1200)` touch point is for a 1080-pixel-wide Pixel 8a screen; verify that it lands in the game's tappable area. Window capture follows the scrcpy client area, so the sample crop rectangle is ignored while `use_scrcpy_window` is true.
 
 ## Playing and stopping
 
-The dashboard connects ADB and starts capture, but does not tap until you check **Enable Autopilot** or deliberately enable and press **TEST FLAP**. Autopilot remains armed through pause and results screens and waits for gameplay to return. It does not restart the game. **STOP INPUT** disables further commands until you connect ADB again.
+The dashboard connects ADB and starts capture, but does not tap until you check **Enable Autopilot** or deliberately enable and press **TEST FLAP**. With the default Java engine, checking **Enable Autopilot** compiles the Java source, starts its scan-line process, and routes its detected boxes and acknowledged ADB taps back to the GUI. Unchecking it sends `stop` to Java. **STOP INPUT** stops both engines and disables further test input until you connect ADB again. Autopilot remains armed through pause and results screens and waits for gameplay to return. It does not restart the game.
 
 The red outline is the selected pillar opening. Cyan horizontal lines sit 15% of the opening height inside each pillar edge; the white line is its midpoint. The green upper band means no click and the red lower band is the click area. The planner sends at most one tap while the scooter remains in a red band. It rearms only after the scooter returns to green or a new pillar is selected, subject to a 110 ms minimum tap interval and ADB command completion. Three blue vertical lines show the behind, scooter, and approaching scan columns.
 
-For the optional two-point overlay, click **Mark scooter**, then click the scooter in the dashboard image. Click **Mark next gap center**, then the center of each new pillar opening. While this mode is active, the planner waits for a new gap mark after the current pillar clears. **Clear points / automatic gaps** returns to automatic selection. A verified gap can be projected through a detector dropout for at most 200 ms; `gap estimated` appears in the metrics line during that time.
+For the optional two-point overlay, select **Python visual / manual points** before enabling Autopilot. Click **Mark scooter**, then click the scooter in the dashboard image. Click **Mark next gap center**, then the center of each new pillar opening. While this mode is active, the planner waits for a new gap mark after the current pillar clears. **Clear points / automatic gaps** returns to automatic selection. A verified gap can be projected through a detector dropout for at most 200 ms; `gap estimated` appears in the metrics line during that time. The manual marks do not steer the Java engine.
 
 These thresholds came from recorded Pixel 8a frames and offline checks. Gap detection and flap timing still need live validation for this specific game. The dashboard does not track scores or submit leaderboard entries.
 

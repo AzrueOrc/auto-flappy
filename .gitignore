@@ -93,4 +93,5 @@ pixel8a/config/settings.local.json
 pixel8a/recordings/
 pixel8a/screenshots/
 pixel8a-java/config.local.properties
+pixel8a-java/config.gui.properties
 pixel8a-java/preview.png

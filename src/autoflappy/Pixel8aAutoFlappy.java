@@ -23,6 +23,7 @@ import javax.imageio.ImageIO;
 public final class Pixel8aAutoFlappy {
     private final Properties settings = new Properties();
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final boolean eventMode;
     private final Pixel8aVision vision = new Pixel8aVision();
     private final Pixel8aPlanner planner = new Pixel8aPlanner();
     private Robot robot;
@@ -34,8 +35,14 @@ public final class Pixel8aAutoFlappy {
     private Thread worker;
     private volatile String status = "Idle";
     private volatile long frames, taps, lastTapMs;
+    private long lastFrameEventNs;
 
     public Pixel8aAutoFlappy(String configPath) throws IOException, AWTException {
+        this(configPath, false);
+    }
+
+    public Pixel8aAutoFlappy(String configPath, boolean eventMode) throws IOException, AWTException {
+        this.eventMode = eventMode;
         Path path = Paths.get(configPath);
         if (!Files.isRegularFile(path)) {
             Path example = Paths.get("pixel8a-java", "config.example.properties");
@@ -101,6 +108,37 @@ public final class Pixel8aAutoFlappy {
         catch (NumberFormatException e) { throw new IOException("Invalid " + key + " in configuration", e); }
     }
 
+    private void emit(String kind, String value) {
+        String safe = String.valueOf(value).replace('\n', ' ').replace('\r', ' ').replace('\t', ' ');
+        if (eventMode) System.out.println("EVT\t" + kind + "\t" + safe);
+        else System.out.println(safe);
+    }
+
+    private static String box(Pixel8aVision.Box value) {
+        if (value == null) return "-";
+        return value.left + "," + value.top + "," + value.right + "," + value.bottom;
+    }
+
+    private static String gap(Pixel8aVision.Gap value) {
+        if (value == null) return "-";
+        return value.left + "," + value.top + "," + value.right + "," + value.bottom;
+    }
+
+    private void frameEvent(Pixel8aVision.Observation found) {
+        if (!eventMode) return;
+        long now = System.nanoTime();
+        if (now - lastFrameEventNs < 50_000_000L) return;
+        lastFrameEventNs = now;
+        StringBuilder gaps = new StringBuilder();
+        for (Pixel8aVision.Gap opening : found.gaps) {
+            if (gaps.length() > 0) gaps.append(';');
+            gaps.append(gap(opening));
+        }
+        System.out.println("EVT\tFRAME\t" + (found.gameplay ? "1" : "0") + "\t"
+                + box(found.scooter) + "\t" + (gaps.length() == 0 ? "-" : gaps)
+                + "\t" + gap(found.activeGap));
+    }
+
     private void preview() throws IOException, AWTException {
         Rectangle area = resolveMirror();
         BufferedImage frame = captureRobot(area).createScreenCapture(area);
@@ -108,17 +146,22 @@ public final class Pixel8aAutoFlappy {
         if (!ImageIO.write(frame, "png", output.toFile()))
             throw new IOException("Could not save capture preview");
         Pixel8aVision.Observation found = vision.analyze(frame);
-        System.out.println("Saved " + output.toAbsolutePath());
-        System.out.println("Captured " + area);
-        System.out.printf("gameplay=%s scooter=%s gaps=%d selected=%s%n",
+        if (!eventMode) {
+            System.out.println("Saved " + output.toAbsolutePath());
+            System.out.println("Captured " + area);
+            System.out.printf("gameplay=%s scooter=%s gaps=%d selected=%s%n",
                 found.gameplay, found.scooter != null, found.gaps.size(),
                 found.activeGap != null);
+        } else {
+            frameEvent(found);
+            emit("PREVIEW", output.toAbsolutePath().toString());
+        }
     }
 
     private void start() throws IOException, AWTException {
-        if (running.get()) { System.out.println("Already running"); return; }
+        if (running.get()) { emit("STATE", "RUNNING"); return; }
         if (worker != null && worker.isAlive()) {
-            System.out.println("Previous input command is still finishing; wait before starting again.");
+            emit("ERROR", "Previous input command is still finishing; wait before starting again.");
             return;
         }
         Rectangle area = resolveMirror();
@@ -134,7 +177,8 @@ public final class Pixel8aAutoFlappy {
         worker = new Thread(() -> loop(adb), "Pixel8a scan and tap");
         worker.setDaemon(true);
         worker.start();
-        System.out.println("ADB connected to " + connected + ". Scanning " + mirror
+        emit("STATE", "RUNNING");
+        if (!eventMode) System.out.println("ADB connected to " + connected + ". Scanning " + mirror
                 + "; type stop to disable taps.");
     }
 
@@ -145,6 +189,7 @@ public final class Pixel8aAutoFlappy {
                 BufferedImage frame = robot.createScreenCapture(mirror);
                 Pixel8aVision.Observation found = vision.analyze(frame);
                 frames++;
+                frameEvent(found);
                 status = found.gameplay
                         ? "scooter=" + (found.scooter != null) + " gaps=" + found.gaps.size()
                           + " selected=" + (found.activeGap != null)
@@ -153,6 +198,7 @@ public final class Pixel8aAutoFlappy {
                         && running.get()) {
                     lastTapMs = input.tap(touchX, touchY);
                     taps++;
+                    if (eventMode) System.out.println("EVT\tTAP\t" + taps + "\t" + lastTapMs);
                 }
                 long elapsed = System.nanoTime() - started;
                 long sleepMs = Math.max(0, 16 - elapsed / 1_000_000);
@@ -160,48 +206,57 @@ public final class Pixel8aAutoFlappy {
             }
         } catch (Exception e) {
             status = "Stopped: " + e.getMessage();
-            System.out.println(status);
+            emit("ERROR", status);
         } finally {
             running.set(false);
             planner.reset();
+            if (eventMode) emit("STATE", "STOPPED");
         }
     }
 
     private void stop() {
         running.set(false);
         Thread active = worker;
+        boolean pending = false;
         if (active != null) {
             try { active.join(4000); }
             catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-            if (active.isAlive()) System.out.println("Waiting for an in-flight ADB command to finish.");
+            pending = active.isAlive();
         }
-        System.out.println("Input stopped. " + status);
+        if (pending) emit("STATE", "STOPPING");
+        else if (active == null && eventMode) emit("STATE", "STOPPED");
+        if (!eventMode) System.out.println(pending ? "Waiting for an in-flight ADB command."
+                : "Input stopped. " + status);
     }
 
     public void run() throws IOException {
-        System.out.println("Pixel 8a Java scan-line mode. Commands: preview, start, status, stop, quit");
-        System.out.println(mirrorTitle.isEmpty() ? "Capture rectangle: " + mirror
-                : "Mirror window title: " + mirrorTitle);
+        if (!eventMode) {
+            System.out.println("Pixel 8a Java scan-line mode. Commands: preview, start, status, stop, quit");
+            System.out.println(mirrorTitle.isEmpty() ? "Capture rectangle: " + mirror
+                    : "Mirror window title: " + mirrorTitle);
+        } else emit("STATE", "READY");
         BufferedReader console = new BufferedReader(new InputStreamReader(
                 System.in, StandardCharsets.UTF_8));
         while (true) {
-            System.out.print("Pixel8a> ");
+            if (!eventMode) System.out.print("Pixel8a> ");
             String line = console.readLine();
             if (line == null) { stop(); return; }
             switch (line.trim().toLowerCase()) {
                 case "preview":
-                    try { preview(); } catch (Exception e) { System.out.println(e.getMessage()); }
+                    try { preview(); } catch (Exception e) { emit("ERROR", e.getMessage()); }
                     break;
                 case "start":
-                    try { start(); } catch (Exception e) { System.out.println("Start failed: " + e.getMessage()); }
+                    try { start(); } catch (Exception e) { emit("ERROR", "Start failed: " + e.getMessage()); }
                     break;
                 case "status":
-                    System.out.printf("running=%s frames=%d taps=%d lastADB=%d ms %s%n",
+                    if (eventMode) emit("STATUS", "running=" + running.get() + " frames=" + frames
+                            + " taps=" + taps + " lastADB=" + lastTapMs + " ms " + status);
+                    else System.out.printf("running=%s frames=%d taps=%d lastADB=%d ms %s%n",
                             running.get(), frames, taps, lastTapMs, status);
                     break;
                 case "stop": stop(); break;
                 case "quit": stop(); return;
-                default: System.out.println("Commands: preview, start, status, stop, quit");
+                default: emit("ERROR", "Commands: preview, start, status, stop, quit");
             }
         }
     }

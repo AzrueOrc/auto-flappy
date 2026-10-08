@@ -7,7 +7,7 @@ AutoFlappy
 
 ## Pixel 8a controller
 
-This fork adapts the original Java scan-line player for the Pixel 8a scooter game. It scans a scrcpy mirror and sends flaps through ADB. See [Pixel 8a Java setup and controls](pixel8a-java/README.md). The earlier Python dashboard is also available under [pixel8a](pixel8a/README.md). The original desktop mode still runs without `--pixel8a`.
+This fork adapts the original Java scan-line player for the Pixel 8a scooter game. The [Pixel 8a GUI](pixel8a/README.md) now uses that Java engine by default and shows its detected boxes, tap count, and status. Run `Start Pixel8a GUI.cmd` after setting up the GUI dependencies. The [Java console mode](pixel8a-java/README.md) remains available through `Start Pixel8a Java.cmd`. The original desktop mode still runs without `--pixel8a`.
 
 ## NOTICE
 > :warning: :warning: :warning: **WARNING:** This project is no longer maintained; there may be bugs. Feel free to fork this repository, pull requests *may* be accepted. :warning: :warning: :warning:

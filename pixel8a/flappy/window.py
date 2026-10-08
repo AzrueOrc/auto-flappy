@@ -6,14 +6,15 @@ import sys
 
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (QApplication, QCheckBox, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QHBoxLayout, QLabel,
                                QMainWindow, QPushButton,
                                QVBoxLayout, QWidget)
 
 from .adb import ADBController
 from .autopilot import FlapPlanner, aim_height, clearance_bounds, click_zone, scan_lines
-from .capture import FramePacket, ScreenFrameSource
+from .capture import FramePacket, ScreenFrameSource, window_client_crop
 from .guidance import GapContinuity, ManualGuidance
+from .java_engine import JavaEngine
 from .mirror import Mirror
 from .settings import Settings
 from .vision import Observation, analyze
@@ -63,6 +64,14 @@ class CaptureThread(QThread):
         self._stop = threading.Event()
         self._frame_lock = threading.Lock()
         self._latest: tuple[FramePacket, Observation, float] | None = None
+        self._python_vision = threading.Event()
+        self._python_vision.set()
+
+    def set_python_vision(self, enabled: bool) -> None:
+        if enabled:
+            self._python_vision.set()
+        else:
+            self._python_vision.clear()
 
     def latest(self) -> tuple[FramePacket, Observation, float] | None:
         with self._frame_lock:
@@ -92,9 +101,12 @@ class CaptureThread(QThread):
                                 self._stop.wait(.1)
                                 continue
                         raise
-                    bgra = np.frombuffer(packet.bgra, dtype=np.uint8).reshape(
-                        packet.height, packet.width, 4)
-                    observation = analyze(bgra[:, :, [2, 1, 0]])
+                    if self._python_vision.is_set():
+                        bgra = np.frombuffer(packet.bgra, dtype=np.uint8).reshape(
+                            packet.height, packet.width, 4)
+                        observation = analyze(bgra[:, :, [2, 1, 0]])
+                    else:
+                        observation = Observation("MENU_OR_UNKNOWN", None, (), None)
                     vision_ms = (time.monotonic() - packet.timestamp) * 1000
                     with self._frame_lock:
                         self._latest = (packet, observation, vision_ms)
@@ -111,6 +123,14 @@ class MainWindow(QMainWindow):
         self.planner = FlapPlanner()
         self.guidance = ManualGuidance()
         self.gap_continuity = GapContinuity()
+        self.java_engine = JavaEngine(settings)
+        self.java_engine.ready.connect(self._java_ready)
+        self.java_engine.state.connect(self._java_state)
+        self.java_engine.frame.connect(self._java_frame)
+        self.java_engine.tap.connect(self._java_tap)
+        self.java_engine.failed.connect(self._java_failed)
+        self._java_observation: Observation | None = None
+        self._java_frame_at = 0.0
         self._mark_mode: str | None = None
         self._auto_enabled = threading.Event()
         self._auto_tap_in_flight = False
@@ -134,7 +154,7 @@ class MainWindow(QMainWindow):
         self.frame_timer = QTimer(self)
         self.frame_timer.timeout.connect(self._poll_frame)
         self.frame_timer.start(16)
-        self.setWindowTitle("Flappy Autopilot | Transport and Capture")
+        self.setWindowTitle("Flappy Autopilot | Pixel 8a")
         self.resize(900, 780)
 
         root = QWidget()
@@ -162,6 +182,14 @@ class MainWindow(QMainWindow):
         buttons.addWidget(self.stop_capture_button)
         layout.addLayout(buttons)
 
+        engine_row = QHBoxLayout()
+        engine_row.addWidget(QLabel("Autopilot engine:"))
+        self.engine_choice = QComboBox()
+        self.engine_choice.addItems(("Java scan-line (fork)", "Python visual / manual points"))
+        self.engine_choice.currentIndexChanged.connect(self._update_controls)
+        engine_row.addWidget(self.engine_choice, 1)
+        layout.addLayout(engine_row)
+
         controls = QHBoxLayout()
         self.confirm_tap = QCheckBox("Enable deliberate test flap")
         self.confirm_tap.stateChanged.connect(self._update_controls)
@@ -179,15 +207,15 @@ class MainWindow(QMainWindow):
         layout.addLayout(controls)
 
         marks = QHBoxLayout()
-        mark_scooter = QPushButton("Mark scooter")
-        mark_scooter.clicked.connect(lambda: self._start_marking("scooter"))
-        marks.addWidget(mark_scooter)
-        mark_gap = QPushButton("Mark next gap center")
-        mark_gap.clicked.connect(lambda: self._start_marking("gap"))
-        marks.addWidget(mark_gap)
-        clear_marks = QPushButton("Clear points / automatic gaps")
-        clear_marks.clicked.connect(self._clear_marks)
-        marks.addWidget(clear_marks)
+        self.mark_scooter = QPushButton("Mark scooter")
+        self.mark_scooter.clicked.connect(lambda: self._start_marking("scooter"))
+        marks.addWidget(self.mark_scooter)
+        self.mark_gap = QPushButton("Mark next gap center")
+        self.mark_gap.clicked.connect(lambda: self._start_marking("gap"))
+        marks.addWidget(self.mark_gap)
+        self.clear_marks = QPushButton("Clear points / automatic gaps")
+        self.clear_marks.clicked.connect(self._clear_marks)
+        marks.addWidget(self.clear_marks)
         layout.addLayout(marks)
 
         layout.addWidget(QLabel("Green box: scooter. Yellow: detected gaps. Red outline: target. "
@@ -214,22 +242,30 @@ class MainWindow(QMainWindow):
         self._update_controls()
         if self.settings.launch_scrcpy:
             try:
-                self.mirror.launch(serial, self.settings.window_title,
-                                   self.settings.scrcpy_path or None,
-                                   self.settings.window_x, self.settings.window_y,
-                                   self.settings.window_width, self.settings.window_height,
-                                   self.settings.video_codec, self.settings.video_encoder,
-                                   self.settings.scrcpy_max_fps,
-                                   self.settings.scrcpy_max_size)
-                QTimer.singleShot(2000, self.start_capture)
+                try:
+                    window_client_crop(self.settings.window_title)
+                    QTimer.singleShot(200, self.start_capture)
+                except RuntimeError:
+                    self.mirror.launch(serial, self.settings.window_title,
+                                       self.settings.scrcpy_path or None,
+                                       self.settings.window_x, self.settings.window_y,
+                                       self.settings.window_width, self.settings.window_height,
+                                       self.settings.video_codec, self.settings.video_encoder,
+                                       self.settings.scrcpy_max_fps,
+                                       self.settings.scrcpy_max_size)
+                    QTimer.singleShot(2000, self.start_capture)
             except RuntimeError as exc:
                 self.status.setText(f"ADB connected; mirror launch failed: {exc}")
 
     def _update_controls(self) -> None:
         self.tap_button.setEnabled(self.controller.input_enabled and self.confirm_tap.isChecked()
                                    and not self._auto_enabled.is_set())
-        self.autopilot.setEnabled(self._auto_enabled.is_set() or
+        self.autopilot.setEnabled(self.autopilot.isChecked() or self._auto_enabled.is_set() or
                                   (self.controller.input_enabled and self.capture_thread is not None))
+        self.engine_choice.setEnabled(not self.autopilot.isChecked())
+        manual = self.engine_choice.currentIndex() == 1
+        for button in (self.mark_scooter, self.mark_gap, self.clear_marks):
+            button.setEnabled(manual)
         self.start_button.setEnabled(self.capture_thread is None)
         self.stop_capture_button.setEnabled(self.capture_thread is not None)
 
@@ -302,12 +338,18 @@ class MainWindow(QMainWindow):
 
     def _show_frame(self, packet: FramePacket, observation: Observation,
                     vision_ms: float) -> None:
-        observation = self.guidance.guide(observation, packet.timestamp,
-                                          packet.width, packet.height)
-        if self.guidance.manual_mode and self.guidance.gap_point is None:
-            self.gap_continuity.reset()
-        observation = self.gap_continuity.guide(observation, packet.timestamp,
-                                                packet.width)
+        java_active = self.autopilot.isChecked() and self.engine_choice.currentIndex() == 0
+        if java_active:
+            observation = (self._java_observation if time.monotonic() - self._java_frame_at < .25
+                           and self._java_observation is not None else
+                           Observation("MENU_OR_UNKNOWN", None, (), None))
+        else:
+            observation = self.guidance.guide(observation, packet.timestamp,
+                                              packet.width, packet.height)
+            if self.guidance.manual_mode and self.guidance.gap_point is None:
+                self.gap_continuity.reset()
+            observation = self.gap_continuity.guide(observation, packet.timestamp,
+                                                    packet.width)
         frame = QImage(packet.bgra, packet.width, packet.height, packet.width * 4,
                        QImage.Format.Format_ARGB32).copy()
         painter = QPainter(frame)
@@ -342,11 +384,11 @@ class MainWindow(QMainWindow):
                 painter.setPen(QPen(QColor("#ffffff"), 2))
                 target_y = round(aim_height(gap))
                 painter.drawLine(gap.left, target_y, gap.right, target_y)
-        if self.guidance.scooter_x is not None:
+        if not java_active and self.guidance.scooter_x is not None:
             y = round(observation.scooter.center_y) if observation.scooter else packet.height // 2
             painter.setPen(QPen(QColor("#ff55f5"), 3))
             painter.drawEllipse(self.guidance.scooter_x - 7, y - 7, 14, 14)
-        if self.guidance.gap_point is not None:
+        if not java_active and self.guidance.gap_point is not None:
             if observation.active_gap is not None:
                 gap = observation.active_gap
                 x, y = round((gap.left + gap.right) / 2), round(aim_height(gap))
@@ -363,13 +405,16 @@ class MainWindow(QMainWindow):
         now = time.monotonic()
         fps = 0 if self._last_frame_time is None else 1 / max(now - self._last_frame_time, 1e-6)
         self._last_frame_time = now
+        gap_state = ("seen" if observation.active_gap else "none") if java_active else (
+            "estimated" if self.gap_continuity.estimated else
+            "seen" if observation.active_gap else "none")
         self.metrics.setText(f"Frame {packet.sequence} | display {fps:.1f} FPS | "
                              f"age {(now - packet.timestamp) * 1000:.0f} ms | "
-                             f"vision {vision_ms:.1f} ms | "
+                             f"{'Java scan' if java_active else f'vision {vision_ms:.1f} ms'} | "
                              f"scene {observation.scene} | "
                              f"scooter {'yes' if observation.scooter else 'no'} | "
                              f"gaps {len(observation.gaps)} | "
-                             f"gap {'estimated' if self.gap_continuity.estimated else 'seen' if observation.active_gap else 'none'} | "
+                             f"gap {gap_state} | "
                              f"auto taps {self._auto_tap_count}")
         if self._auto_enabled.is_set():
             if observation.scene == "GAMEPLAY_CANDIDATE":
@@ -394,6 +439,16 @@ class MainWindow(QMainWindow):
                 self.status.setText("Connect ADB and start capture before enabling Autopilot.")
                 return
             self.confirm_tap.setChecked(False)
+            if self.engine_choice.currentIndex() == 0:
+                self._auto_enabled.clear()
+                if hasattr(self.capture_thread, "set_python_vision"):
+                    self.capture_thread.set_python_vision(False)
+                self._auto_tap_count = 0
+                self._java_observation = None
+                self.status.setText("Starting Java scan-line controller...")
+                threading.Thread(target=self.java_engine.launch, daemon=True).start()
+                self._update_controls()
+                return
             self.planner.reset()
             self._auto_seen_gameplay = False
             self._non_gameplay_frames = 0
@@ -401,11 +456,48 @@ class MainWindow(QMainWindow):
             self._auto_enabled.set()
             self.status.setText("Autopilot armed. Resume the game; taps start after stable gameplay detections.")
         else:
+            if self.engine_choice.currentIndex() == 0:
+                try:
+                    self.java_engine.send("stop")
+                except RuntimeError:
+                    pass
+                if self.capture_thread is not None and hasattr(self.capture_thread, "set_python_vision"):
+                    self.capture_thread.set_python_vision(True)
             self._auto_enabled.clear()
             self.planner.reset()
             self._auto_seen_gameplay = False
             self._non_gameplay_frames = 0
             self.status.setText("Autopilot off.")
+        self._update_controls()
+
+    def _java_ready(self) -> None:
+        if self.autopilot.isChecked() and self.engine_choice.currentIndex() == 0:
+            try:
+                self.java_engine.send("start")
+            except RuntimeError as exc:
+                self._java_failed(str(exc))
+
+    def _java_state(self, state: str) -> None:
+        if state == "RUNNING":
+            self.status.setText("Java Autopilot armed. Waiting for gameplay; STOP INPUT disables taps.")
+        elif state == "STOPPING":
+            self.status.setText("Java input command is finishing...")
+        elif state == "STOPPED" and not self.autopilot.isChecked():
+            self.status.setText("Java Autopilot stopped.")
+
+    def _java_frame(self, observation: Observation) -> None:
+        self._java_observation = observation
+        self._java_frame_at = time.monotonic()
+
+    def _java_tap(self, count: int, elapsed_ms: int) -> None:
+        self._auto_tap_count = count
+        self.status.setText(f"Java Autopilot armed | taps sent {count} | "
+                            f"last ADB command {elapsed_ms} ms")
+
+    def _java_failed(self, message: str) -> None:
+        if self.autopilot.isChecked() and self.engine_choice.currentIndex() == 0:
+            self.autopilot.setChecked(False)
+        self.status.setText("Java controller: " + message)
         self._update_controls()
 
     def _send_auto_tap(self) -> None:
@@ -469,6 +561,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._auto_enabled.clear()
+        self.java_engine.close()
         self.stop_capture()
         self.controller.close()
         self.mirror.stop()

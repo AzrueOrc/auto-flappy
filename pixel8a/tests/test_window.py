@@ -34,6 +34,7 @@ class WindowTests(unittest.TestCase):
         app = QApplication.instance() or QApplication([])
         settings = load_settings(Path(__file__).resolve().parents[1] / "config" / "settings.example.json")
         window = MainWindow(settings)
+        window.engine_choice.setCurrentIndex(1)
         window.controller.serial = "test-device"
         window.controller._enabled = True
         window.capture_thread = object()
