@@ -35,7 +35,7 @@ class JavaIntegrationTests(unittest.TestCase):
         window.capture_thread = object()
         window._update_controls()
         self.assertEqual(window.engine_choice.currentIndex(), 0)
-        self.assertFalse(window.mark_gap.isEnabled())
+        self.assertTrue(window.mark_gap.isEnabled())
         launched = threading.Event()
         with patch.object(window.java_engine, "launch", side_effect=launched.set), patch.object(
                 window.java_engine, "send") as send:
@@ -51,6 +51,14 @@ class JavaIntegrationTests(unittest.TestCase):
             window._show_frame(packet, Observation("MENU_OR_UNKNOWN", None, (), None), 0.0)
             self.assertIn("Java scan", window.metrics.text())
             self.assertIn("gaps 1", window.metrics.text())
+            window._start_marking("scooter")
+            window._mark_image_point(110, 435)
+            send.assert_called_with("mark-scooter 110")
+            window._start_marking("gap")
+            window._mark_image_point(210, 425)
+            send.assert_called_with("mark-gap 210 425")
+            window._java_mark_cleared()
+            self.assertIsNone(window.guidance.gap_point)
             window.autopilot.setChecked(False)
             send.assert_called_with("stop")
         window.capture_thread = None

@@ -77,10 +77,28 @@ public final class Pixel8aOfflineTest {
                 : "continue holding altitude while no pillar is visible";
     }
 
+    private static void checkManualMarks() {
+        Pixel8aManualGuide guide = new Pixel8aManualGuide();
+        guide.markScooter(110);
+        guide.markGap(210, 425);
+        Box scooter = new Box(80, 400, 140, 470);
+        for (int i = 0; i < 11; i++) {
+            Gap gap = new Gap(180 - i * 20, 240 - i * 20, 300, 550);
+            Observation raw = new Observation(true, scooter,
+                    java.util.Collections.singletonList(gap), gap);
+            Observation guided = guide.guide(raw, 1_000_000_000L + i * 20_000_000L, 405, 900);
+            if (i == 0) assert guided.activeGap == gap : "manual point selects marked gap";
+            if (i == 10) assert guided.activeGap == null : "mark ends after pillar clears";
+        }
+        assert guide.consumeCleared() : "dashboard receives next-gap signal";
+        assert !guide.consumeCleared() : "next-gap signal is one shot";
+    }
+
     public static void main(String[] args) throws Exception {
         checkVision();
         checkOneTapPerRedEntry();
         checkOpenSkyHold();
+        checkManualMarks();
         Pixel8aVision vision = new Pixel8aVision();
         for (String filename : args) {
             File image = new File(filename);

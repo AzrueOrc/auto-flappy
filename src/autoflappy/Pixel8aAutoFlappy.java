@@ -26,6 +26,7 @@ public final class Pixel8aAutoFlappy {
     private final boolean eventMode;
     private final Pixel8aVision vision = new Pixel8aVision();
     private final Pixel8aPlanner planner = new Pixel8aPlanner();
+    private final Pixel8aManualGuide manual = new Pixel8aManualGuide();
     private Robot robot;
     private Rectangle mirror;
     private final String mirrorTitle;
@@ -36,6 +37,7 @@ public final class Pixel8aAutoFlappy {
     private volatile String status = "Idle";
     private volatile long frames, taps, lastTapMs;
     private long lastFrameEventNs;
+    private volatile boolean resetPlanner;
 
     public Pixel8aAutoFlappy(String configPath) throws IOException, AWTException {
         this(configPath, false);
@@ -145,7 +147,8 @@ public final class Pixel8aAutoFlappy {
         Path output = Paths.get("pixel8a-java", "preview.png");
         if (!ImageIO.write(frame, "png", output.toFile()))
             throw new IOException("Could not save capture preview");
-        Pixel8aVision.Observation found = vision.analyze(frame);
+        Pixel8aVision.Observation found = manual.guide(vision.analyze(frame),
+                System.nanoTime(), frame.getWidth(), frame.getHeight());
         if (!eventMode) {
             System.out.println("Saved " + output.toAbsolutePath());
             System.out.println("Captured " + area);
@@ -187,7 +190,13 @@ public final class Pixel8aAutoFlappy {
             while (running.get()) {
                 long started = System.nanoTime();
                 BufferedImage frame = robot.createScreenCapture(mirror);
-                Pixel8aVision.Observation found = vision.analyze(frame);
+                if (resetPlanner) {
+                    planner.reset();
+                    resetPlanner = false;
+                }
+                Pixel8aVision.Observation found = manual.guide(vision.analyze(frame),
+                        System.nanoTime(), frame.getWidth(), frame.getHeight());
+                if (manual.consumeCleared()) emit("MARK", "GAP_CLEARED");
                 frames++;
                 frameEvent(found);
                 status = found.gameplay
@@ -256,7 +265,28 @@ public final class Pixel8aAutoFlappy {
                     break;
                 case "stop": stop(); break;
                 case "quit": stop(); return;
-                default: emit("ERROR", "Commands: preview, start, status, stop, quit");
+                case "clear-marks":
+                    manual.clear();
+                    resetPlanner = true;
+                    emit("MARK", "CLEARED");
+                    break;
+                default:
+                    if (line.trim().startsWith("mark-scooter ")
+                            || line.trim().startsWith("mark-gap ")) {
+                        try {
+                            String[] fields = line.trim().split("\\s+");
+                            if (fields[0].equals("mark-scooter") && fields.length == 2)
+                                manual.markScooter(Integer.parseInt(fields[1]));
+                            else if (fields[0].equals("mark-gap") && fields.length == 3)
+                                manual.markGap(Integer.parseInt(fields[1]), Integer.parseInt(fields[2]));
+                            else throw new IllegalArgumentException("Invalid mark command");
+                            resetPlanner = true;
+                            emit("MARK", "SET");
+                        } catch (IllegalArgumentException | IllegalStateException e) {
+                            emit("ERROR", e.getMessage());
+                        }
+                    } else emit("ERROR", "Commands: preview, start, status, stop, quit, mark-scooter x, mark-gap x y, clear-marks");
+                    break;
             }
         }
     }

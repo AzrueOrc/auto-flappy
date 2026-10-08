@@ -42,6 +42,7 @@ class JavaEngine(QObject):
     state = Signal(str)
     frame = Signal(object)
     tap = Signal(int, int)
+    mark_cleared = Signal()
     failed = Signal(str)
 
     def __init__(self, settings: Settings) -> None:
@@ -139,6 +140,8 @@ class JavaEngine(QObject):
                         self.ready.emit()
                 elif kind == "ERROR":
                     self.failed.emit("\t".join(parts[2:]))
+                elif kind == "MARK" and parts[2] == "GAP_CLEARED":
+                    self.mark_cleared.emit()
         except (OSError, ValueError) as exc:
             self.failed.emit("Java engine output failed: " + str(exc))
         finally:

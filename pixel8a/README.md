@@ -1,6 +1,6 @@
 # Pixel 8a scooter autopilot
 
-This Windows dashboard watches a Pixel 8a game through scrcpy and draws the scooter and pillar openings. Its default **Java scan-line (fork)** engine runs the adapted Java detector and tap planner under `src/`; the GUI receives Java detections, tap counts, and status. The **Python visual / manual points** option keeps the earlier point-marking controller.
+This Windows dashboard watches a Pixel 8a game through scrcpy and draws the scooter and pillar openings. Its default **Java scan-line (fork)** engine runs the adapted Java detector and tap planner under `src/`; the GUI receives Java detections, tap counts, and status. The **Python dashboard planner** option keeps the earlier controller. Both engines accept the two overlay marks.
 
 ## Set up in Command Prompt
 
@@ -24,7 +24,7 @@ The dashboard connects ADB and starts capture, but does not tap until you check 
 
 The red outline is the selected pillar opening. Cyan horizontal lines sit 15% of the opening height inside each pillar edge; the white line is its midpoint. The green upper band means no click and the red lower band is the click area. The planner sends at most one tap while the scooter remains in a red band. It rearms only after the scooter returns to green or a new pillar is selected, subject to a 110 ms minimum tap interval and ADB command completion. Three blue vertical lines show the behind, scooter, and approaching scan columns.
 
-For the optional two-point overlay, select **Python visual / manual points** before enabling Autopilot. Click **Mark scooter**, then click the scooter in the dashboard image. Click **Mark next gap center**, then the center of each new pillar opening. While this mode is active, the planner waits for a new gap mark after the current pillar clears. **Clear points / automatic gaps** returns to automatic selection. A verified gap can be projected through a detector dropout for at most 200 ms; `gap estimated` appears in the metrics line during that time. The manual marks do not steer the Java engine.
+For the optional two-point overlay in either engine, click **Mark scooter**, then click the scooter in the dashboard image. Click **Mark next gap center**, then the center of each new pillar opening. Both engines use those marks to choose the moving pillar. After the scooter clears it, the gap point is cleared and the dashboard asks for the next one. **Clear points / automatic gaps** returns to automatic selection. A verified gap can be projected through a detector dropout for at most 200 ms; the Python mode shows `gap estimated` in the metrics line during that time.
 
 These thresholds came from recorded Pixel 8a frames and offline checks. Gap detection and flap timing still need live validation for this specific game. The dashboard does not track scores or submit leaderboard entries.
 

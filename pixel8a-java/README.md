@@ -24,6 +24,8 @@ This mode adapts the original Java AutoFlappy algorithm to the green scooter and
 - `status`: show frames, taps, last ADB command time, and detection state.
 - `stop`: disable new taps and wait for any in-flight command to finish.
 - `quit`: stop and exit.
+- `mark-scooter X`, then `mark-gap X Y`: select the scooter lane and the center of the next pillar opening in mirror pixels. Mark each next pillar after the previous one clears.
+- `clear-marks`: return to automatic gap selection.
 
 The detector looks for the green scooter in its left-side lane and for tan brick pillar pairs with dark caps and side borders. It rejects tan background buildings without both pillar rims. It keeps the current opening until the scooter's trailing edge clears it, and briefly estimates a gap for up to 200 ms after three consistent sightings. It requires a moving, stable pillar target before tapping.
 

@@ -128,6 +128,7 @@ class MainWindow(QMainWindow):
         self.java_engine.state.connect(self._java_state)
         self.java_engine.frame.connect(self._java_frame)
         self.java_engine.tap.connect(self._java_tap)
+        self.java_engine.mark_cleared.connect(self._java_mark_cleared)
         self.java_engine.failed.connect(self._java_failed)
         self._java_observation: Observation | None = None
         self._java_frame_at = 0.0
@@ -185,7 +186,7 @@ class MainWindow(QMainWindow):
         engine_row = QHBoxLayout()
         engine_row.addWidget(QLabel("Autopilot engine:"))
         self.engine_choice = QComboBox()
-        self.engine_choice.addItems(("Java scan-line (fork)", "Python visual / manual points"))
+        self.engine_choice.addItems(("Java scan-line (fork)", "Python dashboard planner"))
         self.engine_choice.currentIndexChanged.connect(self._update_controls)
         engine_row.addWidget(self.engine_choice, 1)
         layout.addLayout(engine_row)
@@ -263,9 +264,8 @@ class MainWindow(QMainWindow):
         self.autopilot.setEnabled(self.autopilot.isChecked() or self._auto_enabled.is_set() or
                                   (self.controller.input_enabled and self.capture_thread is not None))
         self.engine_choice.setEnabled(not self.autopilot.isChecked())
-        manual = self.engine_choice.currentIndex() == 1
         for button in (self.mark_scooter, self.mark_gap, self.clear_marks):
-            button.setEnabled(manual)
+            button.setEnabled(True)
         self.start_button.setEnabled(self.capture_thread is None)
         self.stop_capture_button.setEnabled(self.capture_thread is not None)
 
@@ -321,9 +321,19 @@ class MainWindow(QMainWindow):
     def _mark_image_point(self, x: int, y: int) -> None:
         if self._mark_mode == "scooter":
             self.guidance.mark_scooter(x)
+            if self.autopilot.isChecked() and self.engine_choice.currentIndex() == 0:
+                try:
+                    self.java_engine.send(f"mark-scooter {x}")
+                except RuntimeError as exc:
+                    self._java_failed(str(exc))
             self.status.setText("Scooter lane marked. Mark the center of the next pillar gap.")
         elif self._mark_mode == "gap":
             self.guidance.mark_gap(x, y)
+            if self.autopilot.isChecked() and self.engine_choice.currentIndex() == 0:
+                try:
+                    self.java_engine.send(f"mark-gap {x} {y}")
+                except RuntimeError as exc:
+                    self._java_failed(str(exc))
             self.gap_continuity.reset()
             self.planner.reset()
             self.status.setText("Gap center marked. Mark the next gap after this pillar clears.")
@@ -335,6 +345,11 @@ class MainWindow(QMainWindow):
         self.planner.reset()
         self._mark_mode = None
         self.status.setText("Manual points cleared. Automatic gap selection restored.")
+        if self.autopilot.isChecked() and self.engine_choice.currentIndex() == 0:
+            try:
+                self.java_engine.send("clear-marks")
+            except RuntimeError as exc:
+                self._java_failed(str(exc))
 
     def _show_frame(self, packet: FramePacket, observation: Observation,
                     vision_ms: float) -> None:
@@ -384,11 +399,11 @@ class MainWindow(QMainWindow):
                 painter.setPen(QPen(QColor("#ffffff"), 2))
                 target_y = round(aim_height(gap))
                 painter.drawLine(gap.left, target_y, gap.right, target_y)
-        if not java_active and self.guidance.scooter_x is not None:
+        if self.guidance.scooter_x is not None:
             y = round(observation.scooter.center_y) if observation.scooter else packet.height // 2
             painter.setPen(QPen(QColor("#ff55f5"), 3))
             painter.drawEllipse(self.guidance.scooter_x - 7, y - 7, 14, 14)
-        if not java_active and self.guidance.gap_point is not None:
+        if self.guidance.gap_point is not None:
             if observation.active_gap is not None:
                 gap = observation.active_gap
                 x, y = round((gap.left + gap.right) / 2), round(aim_height(gap))
@@ -473,6 +488,12 @@ class MainWindow(QMainWindow):
     def _java_ready(self) -> None:
         if self.autopilot.isChecked() and self.engine_choice.currentIndex() == 0:
             try:
+                self.java_engine.send("clear-marks")
+                if self.guidance.scooter_x is not None:
+                    self.java_engine.send(f"mark-scooter {self.guidance.scooter_x}")
+                if self.guidance.gap_point is not None:
+                    x, y = self.guidance.gap_point
+                    self.java_engine.send(f"mark-gap {x} {y}")
                 self.java_engine.send("start")
             except RuntimeError as exc:
                 self._java_failed(str(exc))
@@ -493,6 +514,10 @@ class MainWindow(QMainWindow):
         self._auto_tap_count = count
         self.status.setText(f"Java Autopilot armed | taps sent {count} | "
                             f"last ADB command {elapsed_ms} ms")
+
+    def _java_mark_cleared(self) -> None:
+        self.guidance.gap_point = None
+        self.status.setText("Pillar cleared. Mark the next gap center.")
 
     def _java_failed(self, message: str) -> None:
         if self.autopilot.isChecked() and self.engine_choice.currentIndex() == 0:
