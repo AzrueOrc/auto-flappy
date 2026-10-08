@@ -5,8 +5,8 @@ This mode adapts the original Java AutoFlappy algorithm to the green scooter and
 ## Run from Command Prompt
 
 1. Install a JDK, Android platform tools, and scrcpy. Connect and unlock the Pixel, enable USB debugging, then confirm that `adb devices` lists it as `device`.
-2. Open the game in a visible scrcpy window. Keep the window in a fixed place while this Java mode runs; the capture uses a desktop rectangle.
-3. Copy `pixel8a-java\config.example.properties` to `pixel8a-java\config.local.properties`. Set `mirror.left`, `mirror.top`, `mirror.width`, and `mirror.height` to the game image's desktop rectangle. Set `adb.path` if `adb` is not on `PATH`; set `adb.serial` when more than one device is connected. The local file is ignored by Git.
+2. Open the game in a visible scrcpy window titled `FlappyFeed`. If scrcpy is on `PATH`, run `scrcpy --window-title FlappyFeed --max-size 1024 --max-fps 60`. Keep the window visible while the Java mode runs.
+3. Copy `pixel8a-java\config.example.properties` to `pixel8a-java\config.local.properties`. Set `mirror.title` to the exact scrcpy window title. The Java mode will locate the game image automatically and refuse to start when that window is missing. The fixed rectangle fields are used only when `mirror.title` is blank. Set `adb.path` if `adb` is not on `PATH`; set `adb.serial` when more than one device is connected. The local file is ignored by Git.
 4. From the repository root, compile and run:
 
    ```bat
@@ -14,7 +14,7 @@ This mode adapts the original Java AutoFlappy algorithm to the green scooter and
    java -cp build\pixel8a-classes autoflappy.Main --pixel8a
    ```
 
-5. Type `preview` before `start`. Open `pixel8a-java\preview.png` and make sure it contains only the full game image, with the scooter and pillars in the expected positions. Adjust the mirror rectangle until it does. `preview` is ignored by Git.
+5. Type `preview` before `start`. Open `pixel8a-java\preview.png` and make sure it contains only the full game image, with the scooter and pillars in the expected positions. `preview` is ignored by Git.
 
 `Start Pixel8a Java.cmd` compiles and launches the mode. It uses the JDK on `PATH`, or Android Studio's bundled JDK when `javac` is not on `PATH`.
 

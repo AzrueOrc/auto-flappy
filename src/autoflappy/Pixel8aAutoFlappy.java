@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.imageio.ImageIO;
 
@@ -24,8 +25,9 @@ public final class Pixel8aAutoFlappy {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final Pixel8aVision vision = new Pixel8aVision();
     private final Pixel8aPlanner planner = new Pixel8aPlanner();
-    private final Robot robot;
-    private final Rectangle mirror;
+    private Robot robot;
+    private Rectangle mirror;
+    private final String mirrorTitle;
     private final String adbPath;
     private final String serial;
     private final int touchX, touchY;
@@ -45,22 +47,53 @@ public final class Pixel8aAutoFlappy {
                 number("mirror.width"), number("mirror.height"));
         if (mirror.width < 100 || mirror.height < 200)
             throw new IOException("Mirror capture rectangle is too small");
+        mirrorTitle = settings.getProperty("mirror.title", "").trim();
         adbPath = settings.getProperty("adb.path", "adb").trim();
         serial = settings.getProperty("adb.serial", "").trim();
         touchX = number("touch.x");
         touchY = number("touch.y");
         if (touchX < 0 || touchY < 0) throw new IOException("Touch coordinates must be nonnegative");
+        if (mirrorTitle.isEmpty()) robot = captureRobot(mirror);
+    }
+
+    private static Robot captureRobot(Rectangle area) throws IOException, AWTException {
         GraphicsDevice captureDisplay = null;
         for (GraphicsDevice display : GraphicsEnvironment.getLocalGraphicsEnvironment()
                 .getScreenDevices()) {
-            if (display.getDefaultConfiguration().getBounds().contains(mirror)) {
+            if (display.getDefaultConfiguration().getBounds().contains(area)) {
                 captureDisplay = display;
                 break;
             }
         }
         if (captureDisplay == null)
             throw new IOException("Mirror rectangle must fit entirely on one connected monitor");
-        robot = new Robot(captureDisplay);
+        return new Robot(captureDisplay);
+    }
+
+    private Rectangle resolveMirror() throws IOException {
+        if (mirrorTitle.isEmpty()) return mirror;
+        Path helper = Paths.get("pixel8a-java", "window-client.ps1").toAbsolutePath();
+        Process lookup = new ProcessBuilder("powershell.exe", "-NoProfile", "-ExecutionPolicy",
+                "Bypass", "-File", helper.toString(), "-Title", mirrorTitle)
+                .redirectErrorStream(true).start();
+        try {
+            if (!lookup.waitFor(5, TimeUnit.SECONDS)) {
+                lookup.destroyForcibly();
+                throw new IOException("Timed out locating scrcpy window");
+            }
+            String output = new String(lookup.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            if (lookup.exitValue() != 0) throw new IOException(output);
+            String[] parts = output.split(",");
+            if (parts.length != 4) throw new IOException("Invalid scrcpy window coordinates: " + output);
+            return new Rectangle(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]),
+                    Integer.parseInt(parts[2]), Integer.parseInt(parts[3]));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            lookup.destroyForcibly();
+            throw new IOException("Interrupted while locating scrcpy window", e);
+        } catch (NumberFormatException e) {
+            throw new IOException("Invalid scrcpy window coordinates", e);
+        }
     }
 
     private int number(String key) throws IOException {
@@ -68,26 +101,32 @@ public final class Pixel8aAutoFlappy {
         catch (NumberFormatException e) { throw new IOException("Invalid " + key + " in configuration", e); }
     }
 
-    private void preview() throws IOException {
-        BufferedImage frame = robot.createScreenCapture(mirror);
+    private void preview() throws IOException, AWTException {
+        Rectangle area = resolveMirror();
+        BufferedImage frame = captureRobot(area).createScreenCapture(area);
         Path output = Paths.get("pixel8a-java", "preview.png");
         if (!ImageIO.write(frame, "png", output.toFile()))
             throw new IOException("Could not save capture preview");
         Pixel8aVision.Observation found = vision.analyze(frame);
         System.out.println("Saved " + output.toAbsolutePath());
+        System.out.println("Captured " + area);
         System.out.printf("gameplay=%s scooter=%s gaps=%d selected=%s%n",
                 found.gameplay, found.scooter != null, found.gaps.size(),
                 found.activeGap != null);
     }
 
-    private void start() throws IOException {
+    private void start() throws IOException, AWTException {
         if (running.get()) { System.out.println("Already running"); return; }
         if (worker != null && worker.isAlive()) {
             System.out.println("Previous input command is still finishing; wait before starting again.");
             return;
         }
+        Rectangle area = resolveMirror();
+        Robot capture = captureRobot(area);
         Pixel8aAdb adb = new Pixel8aAdb(adbPath, serial);
         String connected = adb.connect();
+        mirror = area;
+        robot = capture;
         planner.reset();
         frames = 0;
         taps = 0;
@@ -95,7 +134,8 @@ public final class Pixel8aAutoFlappy {
         worker = new Thread(() -> loop(adb), "Pixel8a scan and tap");
         worker.setDaemon(true);
         worker.start();
-        System.out.println("ADB connected to " + connected + ". Scanning mirror; type stop to disable taps.");
+        System.out.println("ADB connected to " + connected + ". Scanning " + mirror
+                + "; type stop to disable taps.");
     }
 
     private void loop(Pixel8aAdb adb) {
@@ -140,7 +180,8 @@ public final class Pixel8aAutoFlappy {
 
     public void run() throws IOException {
         System.out.println("Pixel 8a Java scan-line mode. Commands: preview, start, status, stop, quit");
-        System.out.println("Capture rectangle: " + mirror);
+        System.out.println(mirrorTitle.isEmpty() ? "Capture rectangle: " + mirror
+                : "Mirror window title: " + mirrorTitle);
         BufferedReader console = new BufferedReader(new InputStreamReader(
                 System.in, StandardCharsets.UTF_8));
         while (true) {
