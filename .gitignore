@@ -82,3 +82,13 @@ nb-configuration.xml
 ## OS X
 ##############################
 .DS_Store
+
+##############################
+## Pixel 8a Python controller
+##############################
+__pycache__/
+*.py[cod]
+.venv/
+pixel8a/config/settings.local.json
+pixel8a/recordings/
+pixel8a/screenshots/
