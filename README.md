@@ -7,7 +7,7 @@ AutoFlappy
 
 ## Pixel 8a controller
 
-This fork also contains a Windows and Android controller for a Flappy Bird style game in which the green scooter is the bird and brick pillars are the pipes. It uses scrcpy for the mirror and ADB for taps. See [Pixel 8a setup and controls](pixel8a/README.md). The original Java application remains below for reference.
+This fork adapts the original Java scan-line player for the Pixel 8a scooter game. It scans a scrcpy mirror and sends flaps through ADB. See [Pixel 8a Java setup and controls](pixel8a-java/README.md). The earlier Python dashboard is also available under [pixel8a](pixel8a/README.md). The original desktop mode still runs without `--pixel8a`.
 
 ## NOTICE
 > :warning: :warning: :warning: **WARNING:** This project is no longer maintained; there may be bugs. Feel free to fork this repository, pull requests *may* be accepted. :warning: :warning: :warning:
