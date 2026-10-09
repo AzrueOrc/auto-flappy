@@ -88,7 +88,8 @@ class JavaEngine(QObject):
     def _config(self) -> Path:
         config = self.root / "pixel8a-java" / "config.gui.properties"
         values = {
-            "mirror.title": self.settings.window_title,
+            # GUI frames provide the exact rectangle; avoid a second window lookup.
+            "mirror.title": "",
             "mirror.left": self.settings.crop.left,
             "mirror.top": self.settings.crop.top,
             "mirror.width": self.settings.crop.width,

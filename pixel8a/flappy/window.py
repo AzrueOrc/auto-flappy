@@ -16,7 +16,7 @@ from .capture import FramePacket, ScreenFrameSource, window_client_crop
 from .guidance import GapContinuity, ManualGuidance
 from .java_engine import JavaEngine, JavaFrame
 from .mirror import Mirror
-from .settings import Settings
+from .settings import Crop, Settings
 from .vision import Observation, analyze
 
 import numpy as np
@@ -132,6 +132,9 @@ class MainWindow(QMainWindow):
         self.java_engine.failed.connect(self._java_failed)
         self._java_frame_data: JavaFrame | None = None
         self._java_frame_at = 0.0
+        self._java_error_latched = False
+        self._latest_crop: Crop | None = None
+        self._java_sent_crop: Crop | None = None
         self._mark_mode: str | None = None
         self._auto_enabled = threading.Event()
         self._auto_tap_in_flight = False
@@ -162,6 +165,10 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(root)
         self.status = QLabel("Disconnected. No input will be sent.")
         layout.addWidget(self.status)
+        self.last_error = QLabel("Last error: none")
+        self.last_error.setWordWrap(True)
+        self.last_error.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.last_error)
         self.image = ClickableFrame("Connect the Pixel 8a, open the game in scrcpy, then start capture.")
         self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image.clicked.connect(self._mark_image_point)
@@ -236,6 +243,7 @@ class MainWindow(QMainWindow):
         if self._auto_enabled.is_set():
             self.autopilot.setChecked(False)
         self.status.setText(message)
+        self.last_error.setText("Last error: " + message)
         self._update_controls()
 
     def _connected(self, serial: str) -> None:
@@ -353,8 +361,17 @@ class MainWindow(QMainWindow):
 
     def _show_frame(self, packet: FramePacket, observation: Observation,
                     vision_ms: float) -> None:
+        if packet.crop is not None:
+            self._latest_crop = packet.crop
         java_active = self.autopilot.isChecked() and self.engine_choice.currentIndex() == 0
         if java_active:
+            if (packet.crop is not None and self._java_sent_crop is not None
+                    and packet.crop != self._java_sent_crop):
+                try:
+                    self._send_java_crop(packet.crop)
+                except RuntimeError as exc:
+                    self._java_failed(str(exc))
+                    return
             telemetry = self._java_frame_data
             if (telemetry is not None and time.monotonic() - self._java_frame_at < .25
                     and (abs(telemetry.width - packet.width) > 2
@@ -462,6 +479,8 @@ class MainWindow(QMainWindow):
                 return
             self.confirm_tap.setChecked(False)
             if self.engine_choice.currentIndex() == 0:
+                self._java_error_latched = False
+                self._java_sent_crop = None
                 self._auto_enabled.clear()
                 if hasattr(self.capture_thread, "set_python_vision"):
                     self.capture_thread.set_python_vision(False)
@@ -495,6 +514,11 @@ class MainWindow(QMainWindow):
     def _java_ready(self) -> None:
         if self.autopilot.isChecked() and self.engine_choice.currentIndex() == 0:
             try:
+                crop = self._latest_crop
+                if crop is None:
+                    crop = (window_client_crop(self.settings.window_title)
+                            if self.settings.use_scrcpy_window else self.settings.crop)
+                self._send_java_crop(crop)
                 self.java_engine.send("clear-marks")
                 if self.guidance.scooter_x is not None:
                     self.java_engine.send(f"mark-scooter {self.guidance.scooter_x}")
@@ -505,12 +529,18 @@ class MainWindow(QMainWindow):
             except RuntimeError as exc:
                 self._java_failed(str(exc))
 
+    def _send_java_crop(self, crop: Crop) -> None:
+        self.java_engine.send(f"set-crop {crop.left} {crop.top} {crop.width} {crop.height}")
+        self._java_sent_crop = crop
+
     def _java_state(self, state: str) -> None:
+        if self._java_error_latched:
+            return
         if state == "RUNNING":
             self.status.setText("Java Autopilot armed. Waiting for gameplay; STOP INPUT disables taps.")
         elif state == "STOPPING":
             self.status.setText("Java input command is finishing...")
-        elif state == "STOPPED" and not self.autopilot.isChecked():
+        elif state == "STOPPED" and not self.autopilot.isChecked() and not self._java_error_latched:
             self.status.setText("Java Autopilot stopped.")
 
     def _java_frame(self, frame: JavaFrame) -> None:
@@ -527,9 +557,13 @@ class MainWindow(QMainWindow):
         self.status.setText("Pillar cleared. Mark the next gap center.")
 
     def _java_failed(self, message: str) -> None:
+        if self._java_error_latched and message == "Java controller exited. Autopilot is off.":
+            return
+        self._java_error_latched = True
         if self.autopilot.isChecked() and self.engine_choice.currentIndex() == 0:
             self.autopilot.setChecked(False)
         self.status.setText("Java controller: " + message)
+        self.last_error.setText("Last error: Java controller: " + message)
         self._update_controls()
 
     def _send_auto_tap(self) -> None:
@@ -557,6 +591,7 @@ class MainWindow(QMainWindow):
     def _auto_failed(self, message: str) -> None:
         self.autopilot.setChecked(False)
         self.status.setText(message)
+        self.last_error.setText("Last error: " + message)
         self._update_controls()
 
     def test_flap(self) -> None:

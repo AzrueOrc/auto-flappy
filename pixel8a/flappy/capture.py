@@ -42,6 +42,7 @@ class FramePacket:
     height: int
     timestamp: float
     sequence: int
+    crop: Crop | None = None
 
 
 class ScreenFrameSource:
@@ -69,4 +70,4 @@ class ScreenFrameSource:
         image = self._sct.grab(crop.as_mss())
         self._sequence += 1
         return FramePacket(image.bgra, image.width, image.height,
-                           time.monotonic(), self._sequence)
+                           time.monotonic(), self._sequence, crop)

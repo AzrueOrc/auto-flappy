@@ -29,6 +29,7 @@ public final class Pixel8aAutoFlappy {
     private final Pixel8aManualGuide manual = new Pixel8aManualGuide();
     private Robot robot;
     private Rectangle mirror;
+    private volatile Rectangle guiMirror;
     private final String mirrorTitle;
     private final String adbPath;
     private final String serial;
@@ -62,7 +63,6 @@ public final class Pixel8aAutoFlappy {
         touchX = number("touch.x");
         touchY = number("touch.y");
         if (touchX < 0 || touchY < 0) throw new IOException("Touch coordinates must be nonnegative");
-        if (mirrorTitle.isEmpty()) robot = captureRobot(mirror);
     }
 
     private static Robot captureRobot(Rectangle area) throws IOException, AWTException {
@@ -80,6 +80,7 @@ public final class Pixel8aAutoFlappy {
     }
 
     private Rectangle resolveMirror() throws IOException {
+        if (guiMirror != null) return guiMirror;
         if (mirrorTitle.isEmpty()) return mirror;
         Path helper = Paths.get("pixel8a-java", "window-client.ps1").toAbsolutePath();
         Process lookup = new ProcessBuilder("powershell.exe", "-NoProfile", "-ExecutionPolicy",
@@ -190,7 +191,10 @@ public final class Pixel8aAutoFlappy {
         try (Pixel8aAdb input = adb) {
             while (running.get()) {
                 long started = System.nanoTime();
-                BufferedImage frame = robot.createScreenCapture(mirror);
+                BufferedImage frame;
+                synchronized (this) {
+                    frame = robot.createScreenCapture(mirror);
+                }
                 if (resetPlanner) {
                     planner.reset();
                     resetPlanner = false;
@@ -272,7 +276,26 @@ public final class Pixel8aAutoFlappy {
                     emit("MARK", "CLEARED");
                     break;
                 default:
-                    if (line.trim().startsWith("mark-scooter ")
+                    if (line.trim().startsWith("set-crop ")) {
+                        try {
+                            String[] fields = line.trim().split("\\s+");
+                            if (fields.length != 5) throw new IllegalArgumentException("Invalid crop command");
+                            Rectangle area = new Rectangle(Integer.parseInt(fields[1]),
+                                    Integer.parseInt(fields[2]), Integer.parseInt(fields[3]),
+                                    Integer.parseInt(fields[4]));
+                            if (area.width < 100 || area.height < 200)
+                                throw new IllegalArgumentException("Mirror capture rectangle is too small");
+                            Robot capture = captureRobot(area);
+                            synchronized (this) {
+                                guiMirror = area;
+                                mirror = area;
+                                robot = capture;
+                            }
+                            emit("CROP", area.toString());
+                        } catch (Exception e) {
+                            emit("ERROR", "Crop failed: " + e.getMessage());
+                        }
+                    } else if (line.trim().startsWith("mark-scooter ")
                             || line.trim().startsWith("mark-gap ")) {
                         try {
                             String[] fields = line.trim().split("\\s+");

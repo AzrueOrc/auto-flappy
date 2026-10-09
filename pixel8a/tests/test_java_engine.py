@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication
 
 from flappy.capture import FramePacket
 from flappy.java_engine import parse_frame
-from flappy.settings import load_settings
+from flappy.settings import Crop, load_settings
 from flappy.vision import Observation
 from flappy.window import MainWindow
 
@@ -41,19 +41,26 @@ class JavaIntegrationTests(unittest.TestCase):
         self.assertTrue(window.mark_gap.isEnabled())
         launched = threading.Event()
         with patch.object(window.java_engine, "launch", side_effect=launched.set), patch.object(
-                window.java_engine, "send") as send:
+                window.java_engine, "send") as send, patch(
+                "flappy.window.window_client_crop", return_value=Crop(-1800, 50, 405, 900)):
             window.autopilot.setChecked(True)
             self.assertTrue(launched.wait(2))
             window._java_ready()
+            self.assertIn("set-crop -1800 50 405 900", [call.args[0] for call in send.call_args_list])
             self.assertFalse(window._auto_enabled.is_set())
             self.assertTrue(window.autopilot.isChecked())
             send.assert_called_with("start")
             window._java_frame(parse_frame(
                 "EVT\tFRAME\t405\t900\t1\t80,400,140,470\t180,240,300,550\t180,240,300,550"))
-            packet = FramePacket(bytes(405 * 900 * 4), 405, 900, time.monotonic(), 1)
+            packet = FramePacket(bytes(405 * 900 * 4), 405, 900, time.monotonic(), 1,
+                                 Crop(-1800, 50, 405, 900))
             window._show_frame(packet, Observation("MENU_OR_UNKNOWN", None, (), None), 0.0)
             self.assertIn("Java scan", window.metrics.text())
             self.assertIn("gaps 1", window.metrics.text())
+            moved = FramePacket(packet.bgra, 405, 900, time.monotonic(), 2,
+                                Crop(-1700, 55, 405, 900))
+            window._show_frame(moved, Observation("MENU_OR_UNKNOWN", None, (), None), 0.0)
+            self.assertEqual(send.call_args.args[0], "set-crop -1700 55 405 900")
             window._start_marking("scooter")
             window._mark_image_point(110, 435)
             send.assert_called_with("mark-scooter 110")
@@ -67,6 +74,10 @@ class JavaIntegrationTests(unittest.TestCase):
             window._show_frame(packet, Observation("MENU_OR_UNKNOWN", None, (), None), 0.0)
             self.assertFalse(window.autopilot.isChecked())
             self.assertIn("capture sizes differ", window.status.text())
+            window._java_state("STOPPED")
+            window._java_failed("Java controller exited. Autopilot is off.")
+            self.assertIn("capture sizes differ", window.status.text())
+            self.assertIn("capture sizes differ", window.last_error.text())
             send.assert_called_with("stop")
         window.capture_thread = None
         window.close()
