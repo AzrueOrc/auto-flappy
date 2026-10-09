@@ -33,6 +33,26 @@ public final class Pixel8aOfflineTest {
         return frame;
     }
 
+    private static BufferedImage oversizedCandidate(int bodyWidth, int lowerStart) {
+        BufferedImage frame = new BufferedImage(405, 900, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = frame.createGraphics();
+        g.setColor(new Color(57, 167, 242)); g.fillRect(0, 0, 405, 900);
+        g.setColor(Color.WHITE); g.fillRect(180, 65, 30, 20);
+        g.setColor(new Color(18, 170, 79)); g.fillRect(90, 415, 48, 48);
+        g.setColor(new Color(223, 175, 111));
+        g.fillRect(180, 90, bodyWidth, 200);
+        g.fillRect(180, lowerStart, bodyWidth, 750 - lowerStart);
+        g.setColor(new Color(60, 43, 30));
+        g.fillRect(176, 290, bodyWidth + 8, 5);
+        g.fillRect(176, lowerStart - 6, bodyWidth + 8, 5);
+        g.fillRect(178, 90, 3, 200);
+        g.fillRect(180 + bodyWidth - 1, 90, 3, 200);
+        g.fillRect(178, lowerStart, 3, 750 - lowerStart);
+        g.fillRect(180 + bodyWidth - 1, lowerStart, 3, 750 - lowerStart);
+        g.dispose();
+        return frame;
+    }
+
     private static void checkVision() {
         Pixel8aVision vision = new Pixel8aVision();
         Observation real = vision.analyze(syntheticFrame(true));
@@ -42,6 +62,12 @@ public final class Pixel8aOfflineTest {
         assert real.activeGap.top < 320 && real.activeGap.bottom > 490 : "gap bounds";
         Observation background = vision.analyze(syntheticFrame(false));
         assert background.gaps.isEmpty() : "tan background without rims";
+        assert vision.analyze(oversizedCandidate(68, 520)).activeGap != null
+                : "ordinary pillar candidate";
+        assert vision.analyze(oversizedCandidate(130, 520)).gaps.isEmpty()
+                : "joined skyline width must not become a pillar";
+        assert vision.analyze(oversizedCandidate(68, 650)).gaps.isEmpty()
+                : "oversized vertical opening must not become a gap";
     }
 
     private static void checkOneTapPerRedEntry() {
@@ -117,6 +143,12 @@ public final class Pixel8aOfflineTest {
                     image.getName(), observed.gameplay,
                     observed.scooter != null, observed.gaps.size(),
                     observed.activeGap != null);
+            if (observed.scooter != null)
+                System.out.printf("  scooter=(%d,%d)-(%d,%d)%n", observed.scooter.left,
+                        observed.scooter.top, observed.scooter.right, observed.scooter.bottom);
+            for (Gap opening : observed.gaps)
+                System.out.printf("  gap=(%d,%d)-(%d,%d)%n", opening.left,
+                        opening.top, opening.right, opening.bottom);
         }
         System.out.println("Pixel8aOfflineTest passed");
     }

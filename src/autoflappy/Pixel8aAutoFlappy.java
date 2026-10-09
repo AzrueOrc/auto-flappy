@@ -126,7 +126,7 @@ public final class Pixel8aAutoFlappy {
         return value.left + "," + value.top + "," + value.right + "," + value.bottom;
     }
 
-    private void frameEvent(Pixel8aVision.Observation found) {
+    private void frameEvent(Pixel8aVision.Observation found, int width, int height) {
         if (!eventMode) return;
         long now = System.nanoTime();
         if (now - lastFrameEventNs < 50_000_000L) return;
@@ -136,7 +136,8 @@ public final class Pixel8aAutoFlappy {
             if (gaps.length() > 0) gaps.append(';');
             gaps.append(gap(opening));
         }
-        System.out.println("EVT\tFRAME\t" + (found.gameplay ? "1" : "0") + "\t"
+        System.out.println("EVT\tFRAME\t" + width + "\t" + height + "\t"
+                + (found.gameplay ? "1" : "0") + "\t"
                 + box(found.scooter) + "\t" + (gaps.length() == 0 ? "-" : gaps)
                 + "\t" + gap(found.activeGap));
     }
@@ -156,7 +157,7 @@ public final class Pixel8aAutoFlappy {
                 found.gameplay, found.scooter != null, found.gaps.size(),
                 found.activeGap != null);
         } else {
-            frameEvent(found);
+            frameEvent(found, frame.getWidth(), frame.getHeight());
             emit("PREVIEW", output.toAbsolutePath().toString());
         }
     }
@@ -198,7 +199,7 @@ public final class Pixel8aAutoFlappy {
                         System.nanoTime(), frame.getWidth(), frame.getHeight());
                 if (manual.consumeCleared()) emit("MARK", "GAP_CLEARED");
                 frames++;
-                frameEvent(found);
+                frameEvent(found, frame.getWidth(), frame.getHeight());
                 status = found.gameplay
                         ? "scooter=" + (found.scooter != null) + " gaps=" + found.gaps.size()
                           + " selected=" + (found.activeGap != null)

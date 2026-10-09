@@ -129,6 +129,9 @@ def _pillars(rgb: np.ndarray) -> tuple[PillarGap, ...]:
     groups = _runs(columns, max(15, int(w * .07)))
     gaps: list[PillarGap] = []
     for left, right in groups:
+        # Skyline buildings can merge into a broad false pillar group.
+        if right - left > w * .25:
+            continue
         inner_left = left + (right - left) // 4
         inner_right = right - (right - left) // 4
         rows = tan[:, inner_left:inner_right].mean(axis=1) >= .48
@@ -171,7 +174,7 @@ def _pillars(rgb: np.ndarray) -> tuple[PillarGap, ...]:
         # A pair consists of two tall pillar spans separated by free space.
         for upper, lower in combinations(blocks, 2):
             gap_top, gap_bottom = y0 + upper[1], y0 + lower[0]
-            if gap_bottom - gap_top >= int(h * .08):
+            if int(h * .08) <= gap_bottom - gap_top <= h * .36:
                 cap_left = max(0, left - max(3, int(w * .01)))
                 cap_right = min(w, right + max(3, int(w * .01)))
                 radius = max(6, int(h * .012))

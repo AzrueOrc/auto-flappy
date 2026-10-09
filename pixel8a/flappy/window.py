@@ -14,7 +14,7 @@ from .adb import ADBController
 from .autopilot import FlapPlanner, aim_height, clearance_bounds, click_zone, scan_lines
 from .capture import FramePacket, ScreenFrameSource, window_client_crop
 from .guidance import GapContinuity, ManualGuidance
-from .java_engine import JavaEngine
+from .java_engine import JavaEngine, JavaFrame
 from .mirror import Mirror
 from .settings import Settings
 from .vision import Observation, analyze
@@ -130,7 +130,7 @@ class MainWindow(QMainWindow):
         self.java_engine.tap.connect(self._java_tap)
         self.java_engine.mark_cleared.connect(self._java_mark_cleared)
         self.java_engine.failed.connect(self._java_failed)
-        self._java_observation: Observation | None = None
+        self._java_frame_data: JavaFrame | None = None
         self._java_frame_at = 0.0
         self._mark_mode: str | None = None
         self._auto_enabled = threading.Event()
@@ -355,8 +355,14 @@ class MainWindow(QMainWindow):
                     vision_ms: float) -> None:
         java_active = self.autopilot.isChecked() and self.engine_choice.currentIndex() == 0
         if java_active:
-            observation = (self._java_observation if time.monotonic() - self._java_frame_at < .25
-                           and self._java_observation is not None else
+            telemetry = self._java_frame_data
+            if (telemetry is not None and time.monotonic() - self._java_frame_at < .25
+                    and (abs(telemetry.width - packet.width) > 2
+                         or abs(telemetry.height - packet.height) > 2)):
+                self._java_failed("Java and dashboard capture sizes differ. Check the scrcpy window.")
+                return
+            observation = (telemetry.observation if telemetry is not None
+                           and time.monotonic() - self._java_frame_at < .25 else
                            Observation("MENU_OR_UNKNOWN", None, (), None))
         else:
             observation = self.guidance.guide(observation, packet.timestamp,
@@ -423,7 +429,8 @@ class MainWindow(QMainWindow):
         gap_state = ("seen" if observation.active_gap else "none") if java_active else (
             "estimated" if self.gap_continuity.estimated else
             "seen" if observation.active_gap else "none")
-        self.metrics.setText(f"Frame {packet.sequence} | display {fps:.1f} FPS | "
+        self.metrics.setText(f"Frame {packet.sequence} {packet.width}x{packet.height} | "
+                             f"display {fps:.1f} FPS | "
                              f"age {(now - packet.timestamp) * 1000:.0f} ms | "
                              f"{'Java scan' if java_active else f'vision {vision_ms:.1f} ms'} | "
                              f"scene {observation.scene} | "
@@ -459,7 +466,7 @@ class MainWindow(QMainWindow):
                 if hasattr(self.capture_thread, "set_python_vision"):
                     self.capture_thread.set_python_vision(False)
                 self._auto_tap_count = 0
-                self._java_observation = None
+                self._java_frame_data = None
                 self.status.setText("Starting Java scan-line controller...")
                 threading.Thread(target=self.java_engine.launch, daemon=True).start()
                 self._update_controls()
@@ -506,8 +513,8 @@ class MainWindow(QMainWindow):
         elif state == "STOPPED" and not self.autopilot.isChecked():
             self.status.setText("Java Autopilot stopped.")
 
-    def _java_frame(self, observation: Observation) -> None:
-        self._java_observation = observation
+    def _java_frame(self, frame: JavaFrame) -> None:
+        self._java_frame_data = frame
         self._java_frame_at = time.monotonic()
 
     def _java_tap(self, count: int, elapsed_ms: int) -> None:

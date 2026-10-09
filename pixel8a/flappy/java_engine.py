@@ -4,6 +4,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
@@ -21,20 +22,40 @@ def _box(value: str, kind: type[Box] | type[PillarGap]):
     return kind(*values)
 
 
-def parse_frame(line: str) -> Observation:
+@dataclass(frozen=True)
+class JavaFrame:
+    width: int
+    height: int
+    observation: Observation
+
+
+def parse_frame(line: str) -> JavaFrame:
     parts = line.rstrip("\r\n").split("\t")
-    if len(parts) != 6 or parts[:2] != ["EVT", "FRAME"]:
+    if len(parts) != 8 or parts[:2] != ["EVT", "FRAME"]:
         raise ValueError("Invalid Java frame event")
-    if parts[2] not in {"0", "1"}:
+    width, height = int(parts[2]), int(parts[3])
+    if width < 100 or height < 200:
+        raise ValueError("Invalid Java frame dimensions")
+    if parts[4] not in {"0", "1"}:
         raise ValueError("Invalid Java gameplay flag")
-    scooter = _box(parts[3], Box)
-    gaps = () if parts[4] == "-" else tuple(
-        _box(value, PillarGap) for value in parts[4].split(";"))
+    scooter = _box(parts[5], Box)
+    gaps = () if parts[6] == "-" else tuple(
+        _box(value, PillarGap) for value in parts[6].split(";"))
     if any(gap is None for gap in gaps):
         raise ValueError("Invalid Java gap")
-    active = _box(parts[5], PillarGap)
-    return Observation("GAMEPLAY_CANDIDATE" if parts[2] == "1" else "MENU_OR_UNKNOWN",
-                       scooter, gaps, active)
+    active = _box(parts[7], PillarGap)
+    if scooter is not None and not (0 <= scooter.left < scooter.right <= width
+                                    and 0 <= scooter.top < scooter.bottom <= height):
+        raise ValueError("Java scooter box is outside the frame")
+    for gap in (*gaps, *((active,) if active is not None else ())):
+        if not (0 <= gap.left < gap.right <= width
+                and 0 <= gap.top < gap.bottom <= height
+                and gap.right - gap.left <= width * .25
+                and gap.bottom - gap.top <= height * .36):
+            raise ValueError("Java pillar box is oversized or outside the frame")
+    observation = Observation("GAMEPLAY_CANDIDATE" if parts[4] == "1"
+                              else "MENU_OR_UNKNOWN", scooter, gaps, active)
+    return JavaFrame(width, height, observation)
 
 
 class JavaEngine(QObject):

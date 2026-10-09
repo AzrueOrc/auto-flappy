@@ -181,6 +181,8 @@ public final class Pixel8aVision {
         int minimumBody = Math.max(35, (int) (h * .055));
         for (Span group : runs(columns, Math.max(15, (int) (w * .07)))) {
             int left = group.start, right = group.end;
+            // Joined skyline buildings can make a very wide false "pillar".
+            if (right - left > w * .25) continue;
             int innerLeft = left + (right - left) / 4;
             int innerRight = right - (right - left) / 4;
             boolean[] rows = new boolean[y1 - y0];
@@ -217,7 +219,7 @@ public final class Pixel8aVision {
                 for (int j = i + 1; j < blocks.size(); j++) {
                     Span upper = blocks.get(i), lower = blocks.get(j);
                     int top = y0 + upper.end, bottom = y0 + lower.start;
-                    if (bottom - top < h * .08) continue;
+                    if (bottom - top < h * .08 || bottom - top > h * .36) continue;
                     if (!hasRim(frame, top, left, right, true)
                             || !hasRim(frame, bottom, left, right, true)
                             || !hasSideBorder(frame, left, upper, lower, y0)

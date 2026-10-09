@@ -18,13 +18,16 @@ from flappy.window import MainWindow
 
 class JavaIntegrationTests(unittest.TestCase):
     def test_java_frame_becomes_overlay_observation(self):
-        frame = parse_frame("EVT\tFRAME\t1\t80,400,140,470\t180,240,300,550;300,360,270,520\t180,240,300,550\n")
-        self.assertEqual(frame.scene, "GAMEPLAY_CANDIDATE")
-        self.assertEqual(frame.scooter.center_y, 435)
-        self.assertEqual(len(frame.gaps), 2)
-        self.assertEqual(frame.active_gap.left, 180)
+        frame = parse_frame("EVT\tFRAME\t405\t900\t1\t80,400,140,470\t180,240,300,550;300,360,270,520\t180,240,300,550\n")
+        self.assertEqual(frame.width, 405)
+        self.assertEqual(frame.observation.scene, "GAMEPLAY_CANDIDATE")
+        self.assertEqual(frame.observation.scooter.center_y, 435)
+        self.assertEqual(len(frame.observation.gaps), 2)
+        self.assertEqual(frame.observation.active_gap.left, 180)
         with self.assertRaises(ValueError):
             parse_frame("EVT\tFRAME\t1\tbroken\t-\t-")
+        with self.assertRaisesRegex(ValueError, "oversized"):
+            parse_frame("EVT\tFRAME\t405\t900\t1\t80,400,140,470\t100,240,300,550\t100,240,300,550")
 
     def test_gui_uses_java_engine_without_python_taps(self):
         app = QApplication.instance() or QApplication([])
@@ -46,8 +49,8 @@ class JavaIntegrationTests(unittest.TestCase):
             self.assertTrue(window.autopilot.isChecked())
             send.assert_called_with("start")
             window._java_frame(parse_frame(
-                "EVT\tFRAME\t1\t80,400,140,470\t180,240,300,550\t180,240,300,550"))
-            packet = FramePacket(bytes(4 * 4 * 4), 4, 4, time.monotonic(), 1)
+                "EVT\tFRAME\t405\t900\t1\t80,400,140,470\t180,240,300,550\t180,240,300,550"))
+            packet = FramePacket(bytes(405 * 900 * 4), 405, 900, time.monotonic(), 1)
             window._show_frame(packet, Observation("MENU_OR_UNKNOWN", None, (), None), 0.0)
             self.assertIn("Java scan", window.metrics.text())
             self.assertIn("gaps 1", window.metrics.text())
@@ -59,7 +62,11 @@ class JavaIntegrationTests(unittest.TestCase):
             send.assert_called_with("mark-gap 210 425")
             window._java_mark_cleared()
             self.assertIsNone(window.guidance.gap_point)
-            window.autopilot.setChecked(False)
+            window._java_frame(parse_frame(
+                "EVT\tFRAME\t500\t900\t1\t80,400,140,470\t180,240,300,550\t180,240,300,550"))
+            window._show_frame(packet, Observation("MENU_OR_UNKNOWN", None, (), None), 0.0)
+            self.assertFalse(window.autopilot.isChecked())
+            self.assertIn("capture sizes differ", window.status.text())
             send.assert_called_with("stop")
         window.capture_thread = None
         window.close()
