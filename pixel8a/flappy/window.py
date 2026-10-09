@@ -127,6 +127,7 @@ class MainWindow(QMainWindow):
         self.java_engine.ready.connect(self._java_ready)
         self.java_engine.state.connect(self._java_state)
         self.java_engine.frame.connect(self._java_frame)
+        self.java_engine.frame_skipped.connect(self._java_frame_skipped)
         self.java_engine.tap.connect(self._java_tap)
         self.java_engine.mark_cleared.connect(self._java_mark_cleared)
         self.java_engine.failed.connect(self._java_failed)
@@ -546,6 +547,10 @@ class MainWindow(QMainWindow):
     def _java_frame(self, frame: JavaFrame) -> None:
         self._java_frame_data = frame
         self._java_frame_at = time.monotonic()
+
+    def _java_frame_skipped(self, reason: str) -> None:
+        self._java_frame_data = None
+        self.last_error.setText("Last warning: skipped Java detection frame: " + reason)
 
     def _java_tap(self, count: int, elapsed_ms: int) -> None:
         self._auto_tap_count = count

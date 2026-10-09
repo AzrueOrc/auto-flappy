@@ -19,7 +19,10 @@ def _box(value: str, kind: type[Box] | type[PillarGap]):
     values = [int(part) for part in value.split(",")]
     if len(values) != 4:
         raise ValueError("Expected four coordinates")
-    return kind(*values)
+    if kind is PillarGap:
+        # Java transmits left,top,right,bottom; PillarGap stores left,right,top,bottom.
+        return PillarGap(values[0], values[2], values[1], values[3])
+    return Box(*values)
 
 
 @dataclass(frozen=True)
@@ -62,6 +65,7 @@ class JavaEngine(QObject):
     ready = Signal()
     state = Signal(str)
     frame = Signal(object)
+    frame_skipped = Signal(str)
     tap = Signal(int, int)
     mark_cleared = Signal()
     failed = Signal(str)
@@ -153,7 +157,7 @@ class JavaEngine(QObject):
                     try:
                         self.frame.emit(parse_frame(line))
                     except ValueError as exc:
-                        self.failed.emit("Invalid Java frame: " + str(exc))
+                        self.frame_skipped.emit(str(exc))
                 elif kind == "TAP" and len(parts) >= 4:
                     self.tap.emit(int(parts[2]), int(parts[3]))
                 elif kind == "STATE":

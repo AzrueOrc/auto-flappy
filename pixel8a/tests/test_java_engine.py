@@ -18,12 +18,15 @@ from flappy.window import MainWindow
 
 class JavaIntegrationTests(unittest.TestCase):
     def test_java_frame_becomes_overlay_observation(self):
-        frame = parse_frame("EVT\tFRAME\t405\t900\t1\t80,400,140,470\t180,240,300,550;300,360,270,520\t180,240,300,550\n")
+        frame = parse_frame("EVT\tFRAME\t405\t900\t1\t80,400,140,470\t180,240,260,550;300,360,370,520\t180,240,260,550\n")
         self.assertEqual(frame.width, 405)
         self.assertEqual(frame.observation.scene, "GAMEPLAY_CANDIDATE")
         self.assertEqual(frame.observation.scooter.center_y, 435)
         self.assertEqual(len(frame.observation.gaps), 2)
         self.assertEqual(frame.observation.active_gap.left, 180)
+        self.assertEqual(frame.observation.active_gap.right, 260)
+        self.assertEqual(frame.observation.active_gap.top, 240)
+        self.assertEqual(frame.observation.active_gap.bottom, 550)
         with self.assertRaises(ValueError):
             parse_frame("EVT\tFRAME\t1\tbroken\t-\t-")
         with self.assertRaisesRegex(ValueError, "oversized"):
@@ -51,12 +54,15 @@ class JavaIntegrationTests(unittest.TestCase):
             self.assertTrue(window.autopilot.isChecked())
             send.assert_called_with("start")
             window._java_frame(parse_frame(
-                "EVT\tFRAME\t405\t900\t1\t80,400,140,470\t180,240,300,550\t180,240,300,550"))
+                "EVT\tFRAME\t405\t900\t1\t80,400,140,470\t180,240,260,550\t180,240,260,550"))
             packet = FramePacket(bytes(405 * 900 * 4), 405, 900, time.monotonic(), 1,
                                  Crop(-1800, 50, 405, 900))
             window._show_frame(packet, Observation("MENU_OR_UNKNOWN", None, (), None), 0.0)
             self.assertIn("Java scan", window.metrics.text())
             self.assertIn("gaps 1", window.metrics.text())
+            window._java_frame_skipped("Java pillar box is oversized or outside the frame")
+            self.assertTrue(window.autopilot.isChecked())
+            self.assertIsNone(window._java_frame_data)
             moved = FramePacket(packet.bgra, 405, 900, time.monotonic(), 2,
                                 Crop(-1700, 55, 405, 900))
             window._show_frame(moved, Observation("MENU_OR_UNKNOWN", None, (), None), 0.0)
@@ -70,7 +76,7 @@ class JavaIntegrationTests(unittest.TestCase):
             window._java_mark_cleared()
             self.assertIsNone(window.guidance.gap_point)
             window._java_frame(parse_frame(
-                "EVT\tFRAME\t500\t900\t1\t80,400,140,470\t180,240,300,550\t180,240,300,550"))
+                "EVT\tFRAME\t500\t900\t1\t80,400,140,470\t180,240,260,550\t180,240,260,550"))
             window._show_frame(packet, Observation("MENU_OR_UNKNOWN", None, (), None), 0.0)
             self.assertFalse(window.autopilot.isChecked())
             self.assertIn("capture sizes differ", window.status.text())
